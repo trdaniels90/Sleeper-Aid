@@ -74,7 +74,7 @@ function injuryBadge(p) {
 }
 
 function playerCell(p) {
-  return `<div class="player">${playerImg(p)}<div><div class="pname">${esc(p.name)} ${injuryBadge(p)}${
+  return `<div class="player" data-player="${esc(p.id)}" role="button" tabindex="0">${playerImg(p)}<div><div class="pname">${esc(p.name)} ${injuryBadge(p)}${
     p.trendRank && p.trendRank <= 25 ? '<span class="badge hot" title="Top 25 most-added on Sleeper in the last 24h">HOT</span>' : ''
   }</div><div class="pmeta"><span class="pos pos-${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.team || 'FA')}</div></div></div>`;
 }
@@ -239,7 +239,9 @@ function computeLeague(raw, projections, nextProjections) {
   const waivers = me ? analyzeWaivers({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : null;
   const moves = me ? recommendMoves({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : [];
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring };
+  const ownerOf = new Map(teams.flatMap((t) => t.all.map((p) => [p.id, t])));
+
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek };
 }
 
 // ---------- rendering ----------
@@ -579,6 +581,123 @@ function renderWaivers() {
     </section>`;
 }
 
+// ---------- player detail ----------
+
+const pct = (a, b) => (b ? `${Math.round((100 * a) / b)}%` : '–');
+const n0 = (v) => (v ? Math.round(v * 10) / 10 : 0);
+const snaps = (s) => pct(s.off_snp || 0, s.tm_off_snp || 0);
+
+// Game-log columns that matter for each position: [header, value from a stat line].
+const LOG_COLUMNS = {
+  QB: [
+    ['C/A', (s) => `${n0(s.pass_cmp)}/${n0(s.pass_att)}`],
+    ['Pass yds', (s) => n0(s.pass_yd)],
+    ['Pass TD', (s) => n0(s.pass_td)],
+    ['INT', (s) => n0(s.pass_int)],
+    ['Rush yds', (s) => n0(s.rush_yd)],
+    ['Rush TD', (s) => n0(s.rush_td)],
+  ],
+  RB: [
+    ['Snap %', snaps],
+    ['Att', (s) => n0(s.rush_att)],
+    ['Rush yds', (s) => n0(s.rush_yd)],
+    ['Rush TD', (s) => n0(s.rush_td)],
+    ['Tgt', (s) => n0(s.rec_tgt)],
+    ['Rec', (s) => n0(s.rec)],
+    ['Rec yds', (s) => n0(s.rec_yd)],
+    ['Rec TD', (s) => n0(s.rec_td)],
+  ],
+  WR: [
+    ['Snap %', snaps],
+    ['Tgt', (s) => n0(s.rec_tgt)],
+    ['Rec', (s) => n0(s.rec)],
+    ['Rec yds', (s) => n0(s.rec_yd)],
+    ['Rec TD', (s) => n0(s.rec_td)],
+    ['Rush yds', (s) => n0(s.rush_yd)],
+  ],
+  K: [
+    ['FG', (s) => `${n0(s.fgm)}/${n0(s.fga)}`],
+    ['Long', (s) => n0(s.fgm_lng)],
+    ['XP', (s) => `${n0(s.xpm)}/${n0(s.xpa)}`],
+  ],
+  DEF: [
+    ['Sacks', (s) => n0(s.sack)],
+    ['INT', (s) => n0(s.int)],
+    ['Fum rec', (s) => n0(s.fum_rec)],
+    ['TD', (s) => n0((s.def_td || 0) + (s.def_st_td || 0))],
+    ['Pts allowed', (s) => n0(s.pts_allow)],
+    ['Yds allowed', (s) => n0(s.yds_allow)],
+  ],
+};
+LOG_COLUMNS.TE = LOG_COLUMNS.WR;
+
+// Points per week as bars, with the selected week's projection as an outlined bar.
+function pointsChart(p, weeks) {
+  // Only future weeks get a projection bar; past weeks already show the real result.
+  const showProj = p.proj !== null && app.week > app.league.lastWeek;
+  const max = Math.max(1, ...p.games.map((g) => g.pts), showProj ? p.proj : 0);
+  const best = p.games.reduce((a, g) => (!a || g.pts > a.pts ? g : a), null);
+  const byWeek = new Map(p.games.map((g) => [g.week, g]));
+  const cols = weeks.map((w) => {
+    const g = byWeek.get(w);
+    if (!g) return `<div class="bar-col" tabindex="0" data-tip="Week ${w}: didn't play (bye or inactive)"><div class="bar-area"><span class="bar-none">–</span></div><div class="bar-x">${w}</div></div>`;
+    const h = (Math.max(g.pts, 0) / max) * 100;
+    const label = best && g.week === best.week ? `<span class="bar-label">${fmt(g.pts)}</span>` : '';
+    return `<div class="bar-col" tabindex="0" data-tip="Week ${w}: ${fmt(g.pts)} pts"><div class="bar-area">${label}<div class="bar" style="height:${h}%"></div></div><div class="bar-x">${w}</div></div>`;
+  });
+  if (showProj) {
+    const h = (Math.max(p.proj, 0) / max) * 100;
+    cols.push(`<div class="bar-col" tabindex="0" data-tip="Week ${app.week} projection: ${fmt(p.proj)} pts"><div class="bar-area"><span class="bar-label">${fmt(p.proj)}</span><div class="bar proj" style="height:${h}%"></div></div><div class="bar-x">${app.week}<br>proj</div></div>`);
+  }
+  return `<div class="bars" role="img" aria-label="Fantasy points by week">${cols.join('')}</div>`;
+}
+
+function openPlayer(id) {
+  const L = app.league;
+  const p = L?.players[id];
+  if (!p) return;
+  const owner = L.ownerOf.get(id);
+  const ownerText = owner ? (L.me && owner.rosterId === L.me.rosterId ? 'On your team' : `Rostered by ${esc(owner.name)}`) : 'Free agent';
+  const weeks = Array.from({ length: L.lastWeek }, (_, i) => i + 1);
+  const cols = LOG_COLUMNS[p.pos] || [];
+  const byWeek = new Map(p.games.map((g) => [g.week, g]));
+  const logRows = [...weeks]
+    .reverse()
+    .map((w) => {
+      const g = byWeek.get(w);
+      if (!g) return `<tr class="muted"><td>${w}</td><td class="num">–</td><td colspan="${cols.length}">Didn't play (bye or inactive)</td></tr>`;
+      return `<tr><td>${w}</td><td class="num strong">${fmt(g.pts)}</td>${cols.map(([, f]) => `<td class="num">${f(g.stats)}</td>`).join('')}</tr>`;
+    })
+    .join('');
+  const meta = [p.team || 'FA', p.age ? `Age ${p.age}` : '', p.depth ? `Depth chart #${p.depth}` : ''].filter(Boolean).map(esc).join(' · ');
+
+  $('#player-body').innerHTML = `
+    <div class="dialog-head">
+      ${playerImg(p).replace('class="headshot"', 'class="headshot large"')}
+      <div>
+        <h2>${esc(p.name)} ${injuryBadge(p)}</h2>
+        <div class="pmeta"><span class="pos pos-${esc(p.pos)}">${esc(p.pos)}</span> ${meta}</div>
+        <div class="pmeta">${ownerText}${p.trendAdd ? ` · ${compact(p.trendAdd)} adds in 24h` : ''}${p.trendDrop ? ` · ${compact(p.trendDrop)} drops` : ''}</div>
+      </div>
+      <button class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="mini-stats">
+      <div><div class="label">Season</div><div class="value">${fmt(p.season)}</div></div>
+      <div><div class="label">Avg (${p.gp} g)</div><div class="value">${fmt(p.avg)}</div></div>
+      <div><div class="label">Last 3</div><div class="value">${fmt(p.l3)}</div></div>
+      <div><div class="label">Wk ${app.week} proj</div><div class="value">${fmt(p.proj)}</div></div>
+    </div>
+    <h3>Points by week</h3>
+    ${p.games.length || p.proj ? pointsChart(p, weeks) : '<p class="muted">No games played yet this season.</p>'}
+    <h3>Game log</h3>
+    <div class="table-wrap"><table class="table log">
+      <thead><tr><th>Wk</th><th class="num">Pts</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join('')}</tr></thead>
+      <tbody>${logRows || `<tr><td colspan="${cols.length + 2}" class="muted">No games yet.</td></tr>`}</tbody>
+    </table></div>
+    <p class="footnote">Points use your league's scoring settings.</p>`;
+  $('#player-dialog').showModal();
+}
+
 // ---------- events ----------
 
 function bind() {
@@ -619,6 +738,11 @@ function bind() {
   });
 
   $('#view').addEventListener('click', (e) => {
+    const player = e.target.closest('[data-player]');
+    if (player) {
+      openPlayer(player.dataset.player);
+      return;
+    }
     const row = e.target.closest('.team-row');
     if (row) {
       const id = Number(row.dataset.roster);
@@ -649,6 +773,18 @@ function bind() {
 
 function init() {
   bind();
+  const dialog = $('#player-dialog');
+  // Close on backdrop click (the dialog element itself is the backdrop area).
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog || e.target.closest('.dialog-close')) dialog.close();
+  });
+  $('#view').addEventListener('keydown', (e) => {
+    const player = e.target.closest('[data-player]');
+    if (player && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      openPlayer(player.dataset.player);
+    }
+  });
   const params = new URLSearchParams(location.search);
   const username = params.get('user') || recall('sa.username') || DEFAULT_USERNAME;
   app.tab = recall('sa.tab') || 'team';

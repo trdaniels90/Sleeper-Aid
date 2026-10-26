@@ -61,7 +61,7 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
     const games = [];
     for (const { week, stats } of weeklyStats) {
       const pts = scorePoints(stats[p.id], scoring);
-      if (pts !== null) games.push({ week, pts });
+      if (pts !== null) games.push({ week, pts, stats: stats[p.id] });
     }
     const season = games.reduce((a, g) => a + g.pts, 0);
     const seasonAvg = avg(games.map((g) => g.pts));
