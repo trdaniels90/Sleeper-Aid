@@ -505,7 +505,7 @@ function renderBestByPosition(results) {
   return `<section class="card">
     <h3>Best available by position</h3>
     <div class="pos-grid">${cols}</div>
-    <p class="footnote">The green number is points per week added to your best lineup for the rest of the season.</p>
+    <p class="footnote">The green number is how much the pickup improves your team per week for the rest of the season: your best lineup, plus credit for bench players who'd fill in when a starter misses a week.</p>
   </section>`;
 }
 
@@ -575,7 +575,7 @@ function renderWaivers() {
         <thead><tr><th>Player</th><th class="num" title="Points per week your best lineup gains, rest of season">Season +</th><th class="num" title="Points your week ${app.week} lineup gains">Wk ${app.week} +</th><th class="num hide-sm">Proj</th><th class="num hide-sm">L3</th><th class="num hide-sm">Avg</th><th class="num" title="Adds across all Sleeper leagues, last 24h">Adds</th><th class="hide-sm">Drop</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted">No free agents match.</td></tr>'}</tbody>
       </table></div>
-      <p class="footnote"><b>Season +</b> is how many points per week your best lineup would improve if you add the player (and drop the suggested player when your roster is full). A 0.0 means they wouldn't start for you, which can still be fine for a bench stash. <b>Adds</b> is how many Sleeper users added them in the last 24 hours.</p>
+      <p class="footnote"><b>Season +</b> is how much your team improves per week for the rest of the season if you add the player, and drop the suggested player when your roster is full. It counts your best lineup, plus how many points your bench would save when a starter misses a week to a bye or injury. A small positive number usually means a better bench stash. <b>Adds</b> is how many Sleeper users added them in the last 24 hours.</p>
     </section>`;
 }
 

@@ -160,11 +160,28 @@ export function rankPositions(teams, positions) {
   return ranks;
 }
 
-// For every free agent: how much does adding them improve my best lineup,
+// Rough chance a starter at each position misses a given week (bye or injury).
+// Kickers and defenses get streamed off waivers, so backups there earn nothing.
+const MISS_RATE = { QB: 0.08, RB: 0.18, WR: 0.15, TE: 0.12, K: 0, DEF: 0 };
+
+// Rest-of-season worth of a roster: the best lineup, plus bench depth measured
+// as the points the bench saves when each starter misses a week.
+export function rosterValue(roster, slots) {
+  const { lineup, total } = bestLineup(roster, slots, valueScore);
+  let depth = 0;
+  for (const { player } of lineup) {
+    if (!player) continue;
+    const covered = bestLineup(roster.filter((p) => p.id !== player.id), slots, valueScore).total;
+    depth += (MISS_RATE[player.pos] ?? 0.1) * (covered - (total - player.value));
+  }
+  return total + depth;
+}
+
+// For every free agent: how much does adding them improve my roster,
 // both for the selected week and rest of season? And who would I drop?
 export function analyzeWaivers({ myRoster, freeAgents, slots, rosterSize }) {
   const baseLineup = bestLineup(myRoster, slots, valueScore);
-  const base = baseLineup.total;
+  const base = rosterValue(myRoster, slots);
   const baseWeek = bestLineup(myRoster, slots, weekScore).total;
   const needsDrop = myRoster.length >= rosterSize;
 
@@ -172,21 +189,22 @@ export function analyzeWaivers({ myRoster, freeAgents, slots, rosterSize }) {
   const dropCosts = myRoster
     .map((p) => {
       const without = myRoster.filter((x) => x.id !== p.id);
-      return { player: p, cost: round1(base - bestLineup(without, slots, valueScore).total) };
+      return { player: p, cost: round1(base - rosterValue(without, slots)) };
     })
     .sort((a, b) => a.cost - b.cost || a.player.value - b.player.value);
 
   const results = freeAgents.map((fa) => {
     const withFa = [...myRoster, fa];
-    let gain = bestLineup(withFa, slots, valueScore).total - base;
+    let gain = rosterValue(withFa, slots) - base;
     let weekGain = bestLineup(withFa, slots, weekScore).total - baseWeek;
     let drop = null;
     if (needsDrop) {
       // Best player to drop once this FA is on the roster (never the FA themself).
       let bestTotal = -Infinity;
       for (const p of myRoster) {
-        const total = bestLineup(withFa.filter((x) => x.id !== p.id), slots, valueScore).total;
-        if (total > bestTotal || (total === bestTotal && p.value < drop.value)) {
+        const total = rosterValue(withFa.filter((x) => x.id !== p.id), slots);
+        // Near-ties go to dropping the lower-value player (e.g. a spare defense).
+        if (total > bestTotal + 0.05 || (total > bestTotal - 0.05 && p.value < drop.value)) {
           bestTotal = total;
           drop = p;
         }
@@ -203,7 +221,7 @@ export function analyzeWaivers({ myRoster, freeAgents, slots, rosterSize }) {
   return { results, dropCosts, needsDrop };
 }
 
-const MIN_SEASON_GAIN = 0.3; // pts/week worth spending a roster spot on
+const MIN_SEASON_GAIN = 0.5; // pts/week worth spending a roster spot on
 const MIN_WEEK_GAIN = 1.5; // pts this week worth a one-week fill-in
 
 // Greedy add/drop plan: take the single best pickup, apply it to the roster,
