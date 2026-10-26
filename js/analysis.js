@@ -202,3 +202,32 @@ export function analyzeWaivers({ myRoster, freeAgents, slots, rosterSize }) {
 
   return { results, dropCosts, needsDrop };
 }
+
+const MIN_SEASON_GAIN = 0.3; // pts/week worth spending a roster spot on
+const MIN_WEEK_GAIN = 1.5; // pts this week worth a one-week fill-in
+
+// Greedy add/drop plan: take the single best pickup, apply it to the roster,
+// then look again, so suggested moves never reuse the same drop.
+export function recommendMoves({ myRoster, freeAgents, slots, rosterSize, max = 3 }) {
+  let roster = myRoster;
+  let pool = freeAgents.filter((p) => !isOut(p));
+  const moves = [];
+  while (moves.length < max) {
+    const { results } = analyzeWaivers({ myRoster: roster, freeAgents: pool, slots, rosterSize });
+    const best = results.sort((a, b) => b.gain - a.gain || b.weekGain - a.weekGain)[0];
+    if (!best || best.gain < MIN_SEASON_GAIN) break;
+    moves.push({ ...best, kind: 'season' });
+    roster = [...roster.filter((p) => p.id !== best.drop?.id), best.player];
+    pool = pool.filter((p) => p.id !== best.player.id);
+  }
+
+  // A one-week fill-in (bye or injury cover) that doesn't cost long-term value:
+  // never drop someone more valuable than the fill-in for a single week.
+  const { results } = analyzeWaivers({ myRoster: roster, freeAgents: pool, slots, rosterSize });
+  const fillIn = results
+    .filter((r) => r.weekGain >= MIN_WEEK_GAIN && r.gain > -0.5 && (!r.drop || r.drop.value <= r.player.value))
+    .sort((a, b) => b.weekGain - a.weekGain)[0];
+  if (fillIn) moves.push({ ...fillIn, kind: 'week' });
+
+  return moves;
+}

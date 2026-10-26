@@ -8,6 +8,7 @@ import {
   isOut,
   positionStrength,
   rankPositions,
+  recommendMoves,
   startablePositions,
   startingSlots,
   weekScore,
@@ -136,14 +137,15 @@ async function projectionsFor(raw, week) {
   return raw.projections[week];
 }
 
-// The week to set a lineup / make claims for. Sleeper's "current week" can
-// still point at a week whose games are over, so step forward early in the week.
+// The week to set a lineup / make claims for. Sleeper's "current week" stays
+// on a week until Wednesday, so once its Sunday games are played (Mon-Wed)
+// look ahead to next week, which is what waiver claims are for.
 function defaultWeek(raw) {
   const w = Math.max(raw.currentWeek, 1);
   const current = raw.weeklyStats.find((s) => s.week === w);
   const started = current && Object.keys(current.stats).length > 0;
-  const day = new Date().getDay(); // 2 = Tue, 3 = Wed
-  return started && (day === 2 || day === 3) ? w + 1 : w;
+  const day = new Date().getDay(); // 1 = Mon, 2 = Tue, 3 = Wed
+  return started && day >= 1 && day <= 3 ? w + 1 : w;
 }
 
 async function loadLeague() {
@@ -235,8 +237,9 @@ function computeLeague(raw, projections, nextProjections) {
 
   const rosterSize = (league.roster_positions || []).filter((s) => s !== 'IR' && s !== 'TAXI').length;
   const waivers = me ? analyzeWaivers({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : null;
+  const moves = me ? recommendMoves({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : [];
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, scoring };
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring };
 }
 
 // ---------- rendering ----------
@@ -277,13 +280,9 @@ function lineupRows(lineup, highlight) {
     .join('');
 }
 
-function renderMyTeam() {
-  const L = app.league;
-  const me = L.me;
-  if (!me) return `<div class="card">You don't seem to own a team in this league.</div>`;
-
-  const n = L.teams.length;
-  const optimal = bestLineup(me.active, L.slots, weekScore);
+// Compares the lineup currently set in Sleeper with the best one by projection.
+function lineupAdvice(me, slots) {
+  const optimal = bestLineup(me.active, slots, weekScore);
   const byId = new Map(me.all.map((p) => [p.id, p]));
   const currentIds = me.starters.filter((id) => id && id !== '0');
   const current = currentIds.map((id) => byId.get(id)).filter(Boolean);
@@ -292,6 +291,23 @@ function renderMyTeam() {
   const toStart = [...optimalIds].filter((id) => !currentIds.includes(id)).map((id) => byId.get(id));
   const toBench = current.filter((p) => !optimalIds.has(p.id));
   const empty = me.starters.filter((id) => !id || id === '0').length;
+  return { optimal, current, currentTotal, optimalIds, toStart, toBench, empty };
+}
+
+function swapsHtml({ toStart, toBench }) {
+  if (!toStart.length) return `<p class="good-note">Your current Sleeper lineup is already the best by projection.</p>`;
+  return `<div class="swaps"><div><h4>Start</h4>${toStart.map((p) => `<div class="swap in">${esc(p.name)} <span class="num">${fmt(weekScore(p))}</span></div>`).join('')}</div>
+       <div><h4>Bench</h4>${toBench.map((p) => `<div class="swap out">${esc(p.name)} <span class="num">${fmt(weekScore(p))}</span></div>`).join('') || '<div class="muted">Fill empty slot</div>'}</div></div>`;
+}
+
+function renderMyTeam() {
+  const L = app.league;
+  const me = L.me;
+  if (!me) return `<div class="card">You don't seem to own a team in this league.</div>`;
+
+  const n = L.teams.length;
+  const advice = lineupAdvice(me, L.slots);
+  const { optimal, current, currentTotal, optimalIds, toStart, empty } = advice;
 
   const alerts = [];
   for (const p of current) {
@@ -306,10 +322,8 @@ function renderMyTeam() {
       ? `<div class="stat"><div class="label">FAAB left</div><div class="value">$${me.faabLeft}</div></div>`
       : `<div class="stat"><div class="label">Waiver priority</div><div class="value">${me.waiverPosition ? ordinal(me.waiverPosition) : '–'}</div></div>`;
 
-  const swaps = toStart.length
-    ? `<div class="swaps"><div><h4>Start</h4>${toStart.map((p) => `<div class="swap in">${esc(p.name)} <span class="num">${fmt(weekScore(p))}</span></div>`).join('')}</div>
-       <div><h4>Bench</h4>${toBench.map((p) => `<div class="swap out">${esc(p.name)} <span class="num">${fmt(weekScore(p))}</span></div>`).join('') || '<div class="muted">Fill empty slot</div>'}</div></div>`
-    : `<p class="good-note">Your current Sleeper lineup is already the best by projection.</p>`;
+  const swaps = swapsHtml(advice);
+  const pickups = L.moves.filter((m) => m.kind === 'season');
 
   const benchPlayers = me.all.filter((p) => !optimalIds.has(p.id)).sort((a, b) => b.value - a.value);
   const reserveIds = new Set([...me.reserve, ...me.taxi]);
@@ -321,6 +335,12 @@ function renderMyTeam() {
       ${waiverInfo}
       <div class="stat"><div class="label">Week ${app.week} projection</div><div class="value">${optimal.total.toFixed(1)}</div><div class="sub">best lineup · current ${currentTotal.toFixed(1)}</div></div>
     </section>
+
+    ${
+      pickups.length
+        ? `<button class="banner" data-goto="waivers"><b>${pickups.length} recommended pickup${pickups.length > 1 ? 's' : ''}:</b> ${pickups.map((m) => esc(m.player.name)).join(', ')} <span class="muted">→ see Moves</span></button>`
+        : ''
+    }
 
     ${alerts.length ? `<section class="card alerts"><h3>Heads up</h3><ul>${alerts.map((a) => `<li>${a}</li>`).join('')}</ul></section>` : ''}
 
@@ -423,6 +443,72 @@ function renderTradePartners() {
   </section>`;
 }
 
+function moveLine(m) {
+  const drop = m.drop ? `<span class="move-drop">Drop ${esc(m.drop.name)} <span class="muted">${esc(m.drop.pos)}</span></span>` : '<span class="muted">Open roster spot – no drop needed</span>';
+  const why =
+    m.kind === 'week'
+      ? `One-week fill-in: <b>+${m.weekGain.toFixed(1)}</b> pts in week ${app.week}`
+      : `<b>+${m.gain.toFixed(1)}</b> pts/week rest of season${m.weekGain > 0.05 ? ` · +${m.weekGain.toFixed(1)} in week ${app.week}` : ''}`;
+  return `<li class="move"><div class="move-main"><div class="move-add">${playerCell(m.player)}</div><div class="move-arrow">⇄</div>${drop}</div><div class="move-why">${why}${
+    m.player.trendAdd ? ` · ${compact(m.player.trendAdd)} adds in 24h` : ''
+  }</div></li>`;
+}
+
+// The headline plan: who to start this week and which add/drops to make.
+function renderMovesCard(weakSpots, dropCosts, needsDrop) {
+  const L = app.league;
+  const advice = lineupAdvice(L.me, L.slots);
+  const gained = advice.optimal.total - advice.currentTotal;
+  return `<section class="card moves">
+    <h3>Start/sit · week ${app.week}</h3>
+    ${swapsHtml(advice)}
+    ${advice.toStart.length ? `<p class="footnote">Making these changes adds about <b>${gained.toFixed(1)}</b> projected points.</p>` : ''}
+
+    <h3>Recommended pickups</h3>
+    ${
+      L.moves.length
+        ? `<ol class="move-list">${L.moves.map(moveLine).join('')}</ol>`
+        : '<p class="muted">No free agent would improve your lineup right now. Hold your waiver priority.</p>'
+    }
+    <p class="footnote">
+      ${weakSpots.length ? `Weak spots: ${weakSpots.join(' · ')}. ` : ''}
+      ${needsDrop && dropCosts.length ? `If you need a roster spot, drop first: ${dropCosts.slice(0, 3).map((d) => esc(d.player.name)).join(', ')}. ` : ''}
+      ${L.byeTeams.size ? `On bye week ${app.week}: ${[...L.byeTeams].sort().join(', ')}.` : ''}
+    </p>
+  </section>`;
+}
+
+// Top free agents at each position, best for my team first.
+function renderBestByPosition(results) {
+  const L = app.league;
+  const cols = L.positions
+    .map((pos) => {
+      const top = results
+        .filter((r) => r.player.pos === pos && !isOut(r.player))
+        .sort((a, b) => b.gain - a.gain || b.weekGain - a.weekGain || b.margin - a.margin)
+        .slice(0, 4);
+      if (!top.length) return '';
+      const items = top
+        .map((r) => {
+          const verdict =
+            r.gain > 0.05
+              ? `<span class="verdict add">Add${r.drop ? ` · drop ${esc(r.drop.name)}` : ''}</span>`
+              : r.weekGain > 0.05
+                ? `<span class="verdict week">Week ${app.week} only${r.drop ? ` · drop ${esc(r.drop.name)}` : ''}</span>`
+                : `<span class="verdict muted">Bench depth · ${fmt(Math.abs(r.margin))} behind your starter</span>`;
+          return `<li>${playerCell(r.player)}<div class="pos-stats"><span class="gain ${r.gain > 0.05 ? 'up' : ''}">${signed(r.gain)}</span><span class="muted small">proj ${fmt(r.player.proj)}</span></div>${verdict}</li>`;
+        })
+        .join('');
+      return `<div class="pos-col"><h4><span class="pos pos-${pos}">${pos}</span> ${L.me.ranks[pos] ? `<span class="muted small">you rank ${ordinal(L.me.ranks[pos])}</span>` : ''}</h4><ol class="pos-list">${items}</ol></div>`;
+    })
+    .join('');
+  return `<section class="card">
+    <h3>Best available by position</h3>
+    <div class="pos-grid">${cols}</div>
+    <p class="footnote">The green number is points per week added to your best lineup for the rest of the season.</p>
+  </section>`;
+}
+
 function renderWaivers() {
   const L = app.league;
   if (!L.me || !L.waivers) return `<div class="card">You don't seem to own a team in this league.</div>`;
@@ -464,23 +550,11 @@ function renderWaivers() {
   const posChips = ['ALL', ...L.positions].map((p) => `<button class="chip ${w.pos === p ? 'active' : ''}" data-pos="${p}">${p === 'ALL' ? 'All' : p}</button>`).join('');
 
   return `
-    <div class="grid-2 waiver-top">
-      <section class="card">
-        <h3>Your weak spots</h3>
-        <p>${weakSpots.length ? weakSpots.join(' · ') : 'None – you rank in the top half at every position.'}</p>
-        ${L.byeTeams.size ? `<p class="muted small">On bye week ${app.week}: ${[...L.byeTeams].sort().join(', ')}</p>` : ''}
-      </section>
-      <section class="card">
-        <h3>Easiest drops</h3>
-        <ol class="drops">${dropCosts
-          .slice(0, 3)
-          .map((d) => `<li>${esc(d.player.name)} <span class="muted">${esc(d.player.pos)} · lineup loss ${fmt(d.cost)}</span></li>`)
-          .join('')}</ol>
-      </section>
-    </div>
+    ${renderMovesCard(weakSpots, dropCosts, needsDrop)}
+    ${renderBestByPosition(results)}
 
     <section class="card">
-      <h3>Best available free agents</h3>
+      <h3>All free agents</h3>
       <div class="controls">
         <div class="chips">${posChips}</div>
         <label class="check"><input type="checkbox" id="hideOut" ${w.hideOut ? 'checked' : ''}> Hide Out/IR</label>
@@ -550,6 +624,13 @@ function bind() {
       const id = Number(row.dataset.roster);
       app.expandedTeam = app.expandedTeam === id ? null : id;
       render();
+      return;
+    }
+    const goto = e.target.closest('[data-goto]');
+    if (goto) {
+      app.tab = goto.dataset.goto;
+      render();
+      window.scrollTo(0, 0);
       return;
     }
     const chip = e.target.closest('.chip');
