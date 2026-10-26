@@ -57,6 +57,36 @@ function recall(key) {
   }
 }
 
+// ---------- claims you've told the app about ----------
+// Sleeper's public API doesn't expose pending waiver claims, so the app keeps
+// its own list (per league, in this browser) until Sleeper processes them.
+
+const CLAIM_TTL_MS = 8 * 24 * 60 * 60 * 1000;
+const claimsKey = (leagueId) => `sa.claims.${leagueId}`;
+
+function loadClaims(leagueId) {
+  try {
+    return JSON.parse(localStorage.getItem(claimsKey(leagueId))) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveClaims(leagueId, claims) {
+  store(claimsKey(leagueId), JSON.stringify(claims));
+}
+
+// Drop claims that are resolved: the player got rostered (by you or anyone
+// else), the player you'd drop is already gone, or the claim is over a week old.
+function activeClaims(leagueId, rostered, me) {
+  const mine = new Set(me.all.map((p) => p.id));
+  const claims = loadClaims(leagueId).filter(
+    (c) => !rostered.has(c.add) && (!c.drop || mine.has(c.drop)) && Date.now() - c.at < CLAIM_TTL_MS,
+  );
+  saveClaims(leagueId, claims);
+  return claims;
+}
+
 function setStatus(msg, isError = false) {
   const el = $('#status');
   el.textContent = msg || '';
@@ -240,8 +270,17 @@ function computeLeague(raw, projections, nextProjections) {
   for (const p of freeAgents) if (p.trendRank && !poolIds.has(p.id)) pool.push(p);
 
   const rosterSize = (league.roster_positions || []).filter((s) => s !== 'IR' && s !== 'TAXI').length;
-  const waivers = me ? analyzeWaivers({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : null;
-  const moves = me ? recommendMoves({ myRoster: me.active, freeAgents: pool, slots, rosterSize }) : [];
+
+  // Plan as if your pending claims go through: claimed players are off the
+  // board and the players you're dropping for them are already gone.
+  const claims = me ? activeClaims(league.league_id, rostered, me).filter((c) => stats[c.add]) : [];
+  const claimedAdds = new Set(claims.map((c) => c.add));
+  const claimedDrops = new Set(claims.map((c) => c.drop).filter(Boolean));
+  const plannedRoster = me ? [...me.active.filter((p) => !claimedDrops.has(p.id)), ...claims.map((c) => stats[c.add])] : [];
+  const openPool = pool.filter((p) => !claimedAdds.has(p.id));
+
+  const waivers = me ? analyzeWaivers({ myRoster: plannedRoster, freeAgents: openPool, slots, rosterSize }) : null;
+  const moves = me ? recommendMoves({ myRoster: plannedRoster, freeAgents: openPool, slots, rosterSize }) : [];
 
   const ownerOf = new Map(teams.flatMap((t) => t.all.map((p) => [p.id, t])));
 
@@ -269,7 +308,7 @@ function computeLeague(raw, projections, nextProjections) {
     .sort((a, b) => b.week - a.week || b.pts - a.pts)
     .slice(0, HOT_MAX);
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeeks, breakouts };
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeeks, breakouts, claims };
 }
 
 // ---------- rendering ----------
@@ -506,7 +545,26 @@ function moveLine(m) {
       : `<b>+${m.gain.toFixed(1)}</b> pts/week rest of season${m.weekGain > 0.05 ? ` · +${m.weekGain.toFixed(1)} in week ${app.week}` : ''}`;
   return `<li class="move"><div class="move-main"><div class="move-add">${playerCell(m.player)}</div><div class="move-arrow">⇄</div>${drop}</div><div class="move-why">${why}${
     m.player.trendAdd ? ` · ${compact(m.player.trendAdd)} adds in 24h` : ''
-  }</div></li>`;
+  }</div>${claimButton(m.player, m.drop)}</li>`;
+}
+
+function claimButton(add, drop) {
+  return `<button class="claim-btn" data-claim-add="${esc(add.id)}" data-claim-drop="${esc(drop?.id || '')}">✓ I put in this claim</button>`;
+}
+
+function pendingClaimsHtml() {
+  const L = app.league;
+  if (!L.claims.length) return '';
+  const name = (id) => esc(L.players[id]?.name || `Player ${id}`);
+  return `<div class="pending">
+    <h4>Your pending claims</h4>
+    <ul>${L.claims
+      .map(
+        (c) => `<li><span><b>Add ${name(c.add)}</b>${c.drop ? ` · drop ${name(c.drop)}` : ''}</span><button class="link-btn" data-unclaim="${esc(c.add)}">Undo</button></li>`,
+      )
+      .join('')}</ul>
+    <p class="footnote">The suggestions below assume these go through. They clear on their own once Sleeper processes them.</p>
+  </div>`;
 }
 
 // The headline plan: who to start this week and which add/drops to make.
@@ -520,10 +578,11 @@ function renderMovesCard(weakSpots, dropCosts, needsDrop) {
     ${advice.toStart.length ? `<p class="footnote">Making these changes adds about <b>${gained.toFixed(1)}</b> projected points.</p>` : ''}
 
     <h3>Recommended pickups</h3>
+    ${pendingClaimsHtml()}
     ${
       L.moves.length
         ? `<ol class="move-list">${L.moves.map(moveLine).join('')}</ol>`
-        : '<p class="muted">No free agent would improve your lineup right now. Hold your waiver priority.</p>'
+        : `<p class="muted">${L.claims.length ? 'Nothing else worth claiming on top of your pending claims.' : 'No free agent would improve your lineup right now. Hold your waiver priority.'}</p>`
     }
     <p class="footnote">
       ${weakSpots.length ? `Weak spots: ${weakSpots.join(' · ')}. ` : ''}
@@ -547,7 +606,7 @@ function renderBestByPosition(results) {
         .map((r) => {
           const verdict =
             r.gain > 0.05
-              ? `<span class="verdict add">Add${r.drop ? ` · drop ${esc(r.drop.name)}` : ''}</span>`
+              ? `<span class="verdict add">Add${r.drop ? ` · drop ${esc(r.drop.name)}` : ''} ${claimButton(r.player, r.drop).replace('claim-btn', 'claim-btn small')}</span>`
               : r.weekGain > 0.05
                 ? `<span class="verdict week">Week ${app.week} only${r.drop ? ` · drop ${esc(r.drop.name)}` : ''}</span>`
                 : `<span class="verdict muted">Bench depth · ${fmt(Math.abs(r.margin))} behind your starter</span>`;
@@ -801,6 +860,22 @@ function bind() {
       const id = Number(row.dataset.roster);
       app.expandedTeam = app.expandedTeam === id ? null : id;
       render();
+      return;
+    }
+    const claim = e.target.closest('[data-claim-add]');
+    if (claim) {
+      const id = app.league.league.league_id;
+      const claims = loadClaims(id).filter((c) => c.add !== claim.dataset.claimAdd);
+      claims.push({ add: claim.dataset.claimAdd, drop: claim.dataset.claimDrop || null, at: Date.now() });
+      saveClaims(id, claims);
+      loadLeague();
+      return;
+    }
+    const unclaim = e.target.closest('[data-unclaim]');
+    if (unclaim) {
+      const id = app.league.league.league_id;
+      saveClaims(id, loadClaims(id).filter((c) => c.add !== unclaim.dataset.unclaim));
+      loadLeague();
       return;
     }
     const goto = e.target.closest('[data-goto]');

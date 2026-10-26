@@ -881,6 +881,64 @@ dialog::backdrop {
   }
 }
 
+.claim-btn {
+  margin-top: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  padding: 5px 12px;
+}
+
+.claim-btn:hover {
+  border-color: var(--accent);
+}
+
+.claim-btn.small {
+  margin: 0 0 0 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pending {
+  background: var(--accent-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.pending h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.pending ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pending li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.pending .footnote {
+  margin-top: 6px;
+}
+
+.link-btn {
+  background: none;
+  color: var(--accent);
+  padding: 2px 4px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 @media (max-width: 860px) {
   .grid-2 {
     grid-template-columns: 1fr;

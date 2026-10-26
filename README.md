@@ -12,6 +12,7 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
 - **Moves:** your plan for the week in one place.
   - **Start/sit:** who to start and bench, compared with the lineup currently set in Sleeper.
   - **Recommended pickups:** up to 3 add/drop pairs chosen one at a time, so no two moves drop the same player. Can also include one fill-in pickup for a week with a bye or injury.
+  - **Pending claims:** Sleeper doesn't share pending waiver claims, so tap *I put in this claim* on a suggestion to tell the app. Until Sleeper processes the claim, the app plans as if it will go through: that player and the player you're dropping stop being suggested, and later suggestions work from your new roster. A claim clears on its own once the player is on any roster, once you no longer have the player you were dropping, or after 8 days. *Undo* removes it sooner. Claims are saved in the browser you marked them on.
   - **Best available by position:** the top 4 free agents at each position, each marked *Add · drop X*, *Week N only*, or *Bench depth*.
   - **All free agents:** a full table you can sort and filter by position.
 - **Player details:** tap any player to see their season totals, points by week with the upcoming projection, and a game log with position-specific stats (passing, rushing, receiving and snap share, field goals, or defense numbers), all scored with your league's settings.
