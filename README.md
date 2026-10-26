@@ -6,7 +6,7 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
 
 ## Features
 
-- **Breakout ticker:** a scrolling strip at the top listing free agents in your league who scored at least 15 points in the latest week, and at least 1.5× their previous average. Tap a name for their details. It pauses on hover, and if your phone is set to reduce motion it becomes a strip you swipe instead.
+- **Breakout ticker:** a scrolling strip at the top listing free agents in your league who had a big game in either of the last two weeks: at least 15 points and at least 1.5× their average before that week. Players who did it both weeks get a *2 big weeks* tag. Tap a name for their details. It pauses on hover, and if your phone is set to reduce motion it becomes a strip you swipe instead.
 - **My Team:** record, points and waiver priority or FAAB. Shows the best lineup for the selected week by projection, which players to start or bench compared with your current Sleeper lineup, injury and bye alerts, and how your starters rank against the league at each position.
 - **League:** standings, with each team's rank at every position. Tap a team to see its roster, sorted by value. Also suggests trade partners whose surplus matches your needs and the other way around.
 - **Moves:** your plan for the week in one place.

@@ -17,7 +17,8 @@ import {
 const DEFAULT_USERNAME = 'trdaniels90';
 const FA_POOL_SIZE = 150;
 const HOT_MIN_POINTS = 15; // a free agent needs this many points to make the ticker
-const HOT_MAX = 12;
+const HOT_MAX = 15;
+const HOT_WEEKS = 2; // how many recent weeks the ticker looks back
 const $ = (sel) => document.querySelector(sel);
 
 const app = {
@@ -244,21 +245,31 @@ function computeLeague(raw, projections, nextProjections) {
 
   const ownerOf = new Map(teams.flatMap((t) => t.all.map((p) => [p.id, t])));
 
-  // Free agents who blew up in the latest week with games played.
-  const hotWeek = Math.max(0, ...raw.weeklyStats.filter((s) => Object.keys(s.stats).length).map((s) => s.week));
+  // Free agents who blew up in either of the last two weeks with games played.
+  // Each game is compared with the player's average before that week.
+  const playedWeeks = raw.weeklyStats.filter((s) => Object.keys(s.stats).length).map((s) => s.week);
+  const hotWeeks = playedWeeks.slice(-HOT_WEEKS);
   const breakouts = freeAgents
     .map((p) => {
-      const game = p.games.find((g) => g.week === hotWeek);
-      if (!game) return null;
-      const others = p.games.filter((g) => g.week !== hotWeek);
-      const prevAvg = others.length ? others.reduce((a, g) => a + g.pts, 0) / others.length : null;
-      return { player: p, pts: game.pts, prevAvg };
+      const big = hotWeeks
+        .map((week) => {
+          const game = p.games.find((g) => g.week === week);
+          if (!game) return null;
+          const before = p.games.filter((g) => g.week < week);
+          const prevAvg = before.length ? before.reduce((a, g) => a + g.pts, 0) / before.length : null;
+          return { week, pts: game.pts, prevAvg };
+        })
+        .filter((g) => g && g.pts >= HOT_MIN_POINTS && (g.prevAvg === null || g.pts >= g.prevAvg * 1.5));
+      if (!big.length) return null;
+      // Show the biggest of their breakout games.
+      const best = big.reduce((a, g) => (g.pts > a.pts ? g : a));
+      return { player: p, ...best, backToBack: big.length > 1 };
     })
-    .filter((b) => b && b.pts >= HOT_MIN_POINTS && (b.prevAvg === null || b.pts >= b.prevAvg * 1.5))
-    .sort((a, b) => b.pts - a.pts)
+    .filter(Boolean)
+    .sort((a, b) => b.week - a.week || b.pts - a.pts)
     .slice(0, HOT_MAX);
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeek, breakouts };
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeeks, breakouts };
 }
 
 // ---------- rendering ----------
@@ -294,11 +305,12 @@ function renderTicker() {
       <span class="pos pos-${esc(b.player.pos)}">${esc(b.player.pos)}</span>
       <b>${esc(b.player.name)}</b>
       <span class="tick-pts">${fmt(b.pts)} pts</span>
-      <span class="tick-meta">${b.prevAvg === null ? 'first game' : `avg ${fmt(b.prevAvg)}`}${b.player.trendAdd ? ` · ${compact(b.player.trendAdd)} adds` : ''}</span>
+      <span class="tick-week">Wk ${b.week}</span>${b.backToBack ? '<span class="badge hot">2 big weeks</span>' : ''}
+      <span class="tick-meta">${b.prevAvg === null ? 'first game' : `avg ${fmt(b.prevAvg)} before`}${b.player.trendAdd ? ` · ${compact(b.player.trendAdd)} adds` : ''}</span>
     </button>`;
   const items = L.breakouts.map((b) => item(b, false)).join('');
   // The track holds two copies so the loop scrolls seamlessly.
-  el.innerHTML = `<div class="ticker-label">🔥 Wk ${L.hotWeek}<span class="hide-sm">&nbsp;free-agent breakouts</span></div>
+  el.innerHTML = `<div class="ticker-label">🔥 Wk ${L.hotWeeks.join('–')}<span class="hide-sm">&nbsp;free-agent breakouts</span></div>
     <div class="ticker-window"><div class="ticker-track" style="--duration:${L.breakouts.length * 5}s">${items}${L.breakouts.map((b) => item(b, true)).join('')}</div></div>`;
   el.hidden = false;
 }
