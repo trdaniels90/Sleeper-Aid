@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sleeper Aid</title>
+    <meta name="description" content="Roster, league and waiver-wire helper for Sleeper fantasy football leagues." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏈</text></svg>" />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">🏈 Sleeper Aid</div>
+      <form id="user-form" class="user-form">
+        <input id="username" type="text" placeholder="Sleeper username" autocomplete="username" aria-label="Sleeper username" />
+        <button type="submit">Load</button>
+      </form>
+      <div id="pickers" class="pickers" hidden>
+        <select id="league" aria-label="League"></select>
+        <select id="week" aria-label="Week"></select>
+        <button id="refresh" type="button" title="Reload from Sleeper">↻</button>
+      </div>
+    </header>
+
+    <nav id="tabs" class="tabs" hidden>
+      <button class="tab" data-tab="team">My Team</button>
+      <button class="tab" data-tab="league">League</button>
+      <button class="tab" data-tab="waivers">Waivers</button>
+    </nav>
+
+    <main>
+      <div id="status" class="status" hidden></div>
+      <div id="view"></div>
+    </main>
+
+    <footer class="footer">Data from Sleeper's public API. Read-only: make your moves in the Sleeper app.</footer>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
