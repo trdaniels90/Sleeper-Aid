@@ -19,7 +19,7 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
 - Points are calculated with **your league's own scoring settings**, applied to Sleeper's weekly stats and projections.
 - **Value** blends three numbers: this week's projection (50%), the average of the last 3 games (30%) and the season average (20%). If a player is on bye, or out for the week but not on IR, next week's projection is used instead. Players on IR are discounted.
 - The app defaults to the upcoming week. From Monday to Wednesday that's next week, because the current week's games are done and waiver claims are for next week. You can change it with the week picker.
-- **Season +** on the Moves tab adds the free agent to your roster, drops the player you'd miss least if the roster is full, re-optimises your lineup and reports the change. Bench depth counts too. For each starter, the app works out how many points your bench would save if that starter missed a week, weighted by how often players at that position miss (about 18% for RBs, 15% for WRs, 12% for TEs, 8% for QBs and 3% for kickers and defenses). A backup RB or WR is worth keeping; a third QB isn't.
+- **Season +** on the Moves tab adds the free agent to your roster, drops the player you'd miss least if the roster is full, re-optimises your lineup and reports the change. Bench depth counts too. For each starter, the app works out how many points your bench would save if that starter missed a week, weighted by how often players at that position miss (about 18% for RBs, 15% for WRs, 12% for TEs, 8% for QBs; backup kickers and defenses count for nothing since you can stream them). A backup RB or WR is worth keeping; a third QB isn't.
 
 ## Running it
 
