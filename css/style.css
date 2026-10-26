@@ -788,6 +788,90 @@ dialog::backdrop {
   padding: 5px 6px;
 }
 
+.ticker {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.ticker-label {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.ticker-window {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker-scroll var(--duration, 40s) linear infinite;
+}
+
+.ticker:hover .ticker-track,
+.ticker:focus-within .ticker-track {
+  animation-play-state: paused;
+}
+
+@keyframes ticker-scroll {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.tick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  color: var(--text);
+  border-radius: 0;
+  padding: 8px 18px;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.tick:hover b {
+  text-decoration: underline;
+}
+
+.tick-pts {
+  color: var(--good);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tick-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* No auto-scrolling for people who've asked for less motion: swipe instead. */
+@media (prefers-reduced-motion: reduce) {
+  .ticker-window {
+    overflow-x: auto;
+  }
+  .ticker-track {
+    animation: none;
+  }
+  .tick[aria-hidden='true'] {
+    display: none;
+  }
+}
+
 @media (max-width: 860px) {
   .grid-2 {
     grid-template-columns: 1fr;

@@ -16,6 +16,8 @@ import {
 
 const DEFAULT_USERNAME = 'trdaniels90';
 const FA_POOL_SIZE = 150;
+const HOT_MIN_POINTS = 15; // a free agent needs this many points to make the ticker
+const HOT_MAX = 12;
 const $ = (sel) => document.querySelector(sel);
 
 const app = {
@@ -157,6 +159,7 @@ async function loadLeague() {
     setStatus(`Loading week ${app.week} projections…`);
     const [projections, nextProjections] = await Promise.all([projectionsFor(raw, app.week), projectionsFor(raw, app.week + 1)]);
     app.league = computeLeague(raw, projections, nextProjections);
+    renderTicker();
     setStatus('');
     render();
   } catch (err) {
@@ -241,7 +244,21 @@ function computeLeague(raw, projections, nextProjections) {
 
   const ownerOf = new Map(teams.flatMap((t) => t.all.map((p) => [p.id, t])));
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek };
+  // Free agents who blew up in the latest week with games played.
+  const hotWeek = Math.max(0, ...raw.weeklyStats.filter((s) => Object.keys(s.stats).length).map((s) => s.week));
+  const breakouts = freeAgents
+    .map((p) => {
+      const game = p.games.find((g) => g.week === hotWeek);
+      if (!game) return null;
+      const others = p.games.filter((g) => g.week !== hotWeek);
+      const prevAvg = others.length ? others.reduce((a, g) => a + g.pts, 0) / others.length : null;
+      return { player: p, pts: game.pts, prevAvg };
+    })
+    .filter((b) => b && b.pts >= HOT_MIN_POINTS && (b.prevAvg === null || b.pts >= b.prevAvg * 1.5))
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, HOT_MAX);
+
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeek, breakouts };
 }
 
 // ---------- rendering ----------
@@ -263,9 +280,33 @@ function renderWeekPicker(raw) {
   $('#week').innerHTML = opts.join('');
 }
 
+// Scrolling strip of free-agent breakouts. Rendered once per league load so
+// switching tabs doesn't restart the scroll.
+function renderTicker() {
+  const L = app.league;
+  const el = $('#ticker');
+  if (!L || !L.breakouts.length) {
+    el.hidden = true;
+    return;
+  }
+  const item = (b, hidden) =>
+    `<button class="tick" data-player="${esc(b.player.id)}" ${hidden ? 'tabindex="-1" aria-hidden="true"' : ''}>
+      <span class="pos pos-${esc(b.player.pos)}">${esc(b.player.pos)}</span>
+      <b>${esc(b.player.name)}</b>
+      <span class="tick-pts">${fmt(b.pts)} pts</span>
+      <span class="tick-meta">${b.prevAvg === null ? 'first game' : `avg ${fmt(b.prevAvg)}`}${b.player.trendAdd ? ` · ${compact(b.player.trendAdd)} adds` : ''}</span>
+    </button>`;
+  const items = L.breakouts.map((b) => item(b, false)).join('');
+  // The track holds two copies so the loop scrolls seamlessly.
+  el.innerHTML = `<div class="ticker-label">🔥 Wk ${L.hotWeek}<span class="hide-sm">&nbsp;free-agent breakouts</span></div>
+    <div class="ticker-window"><div class="ticker-track" style="--duration:${L.breakouts.length * 5}s">${items}${L.breakouts.map((b) => item(b, true)).join('')}</div></div>`;
+  el.hidden = false;
+}
+
 function render() {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === app.tab));
   $('#tabs').hidden = !app.league;
+  if (!app.league) $('#ticker').hidden = true;
   if (!app.league) return;
   const view = $('#view');
   if (app.tab === 'team') view.innerHTML = renderMyTeam();
@@ -777,6 +818,10 @@ function init() {
   // Close on backdrop click (the dialog element itself is the backdrop area).
   dialog.addEventListener('click', (e) => {
     if (e.target === dialog || e.target.closest('.dialog-close')) dialog.close();
+  });
+  $('#ticker').addEventListener('click', (e) => {
+    const player = e.target.closest('[data-player]');
+    if (player) openPlayer(player.dataset.player);
   });
   $('#view').addEventListener('keydown', (e) => {
     const player = e.target.closest('[data-player]');
