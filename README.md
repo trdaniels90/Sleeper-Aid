@@ -21,6 +21,10 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
 
 - Points are calculated with **your league's own scoring settings**, applied to Sleeper's weekly stats and projections.
 - **Value** blends three numbers: this week's projection (50%), the average of the last 3 games (30%) and the season average (20%). If a player is on bye, or out for the week but not on IR, next week's projection is used instead. Players on IR are discounted.
+- **Matchups:** every defense's weekly stats include the fantasy points it gave up to QBs, RBs, WRs, TEs and kickers, plus the points its offense gave up to opposing defenses. Averaged over the season, those numbers rate how soft or tough each defense is at each position. Small samples are pulled toward average, and each rating is capped at ±25%.
+  - Each player shows this week's opponent as a chip: green means a defense in the top quarter for points allowed to that position, red means the bottom quarter.
+  - **Strength of schedule** averages the player's remaining opponents through the fantasy championship (Easy, Average or Tough). It adjusts the parts of **Value** that come from past games, since those don't account for opponents. Sleeper's projections already account for the opponent, so they're used as-is.
+  - Tap a player to see this week's matchup, all of their remaining opponents, and an opponent column in the game log.
 - The app defaults to the upcoming week. From Monday to Wednesday that's next week, because the current week's games are done and waiver claims are for next week. You can change it with the week picker.
 - **Season +** on the Moves tab adds the free agent to your roster, drops the player you'd miss least if the roster is full, re-optimises your lineup and reports the change. Bench depth counts too. For each starter, the app works out how many points your bench would save if that starter missed a week, weighted by how often players at that position miss (about 18% for RBs, 15% for WRs, 12% for TEs, 8% for QBs; backup kickers and defenses count for nothing since you can stream them). A backup RB or WR is worth keeping; a third QB isn't.
 

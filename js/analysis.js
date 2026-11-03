@@ -49,10 +49,78 @@ export function findByeTeams(projections, players) {
   return new Set([...allTeams].filter((t) => !playing.has(t)));
 }
 
+// ---------- matchups ----------
+
+// Each defense's weekly stat line includes the fantasy points it gave up to
+// opposing QBs/RBs/WRs/TEs/Ks, plus what its offense gave up to opposing
+// defenses (fan_pts_allow_def). Averaging those over the season tells us how
+// generous each team is to each position.
+const ALLOW_KEYS = { QB: 'fan_pts_allow_qb', RB: 'fan_pts_allow_rb', WR: 'fan_pts_allow_wr', TE: 'fan_pts_allow_te', K: 'fan_pts_allow_k', DEF: 'fan_pts_allow_def' };
+const SHRINK_GAMES = 3; // regress small samples toward average
+const FACTOR_RANGE = [0.75, 1.25];
+
+export function buildMatchups(weeklyStats, schedule) {
+  const totals = {}; // team -> pos -> [sum, games]
+  for (const { stats } of weeklyStats) {
+    for (const [team, s] of Object.entries(stats)) {
+      if (!s.fan_pts_allow && s.fan_pts_allow !== 0) continue; // only team defense lines
+      for (const [pos, key] of Object.entries(ALLOW_KEYS)) {
+        if (s[key] === undefined) continue;
+        const t = ((totals[team] ??= {})[pos] ??= [0, 0]);
+        t[0] += s[key];
+        t[1] += 1;
+      }
+    }
+  }
+
+  const avgAllowed = {}; // pos -> team -> avg
+  const leagueAvg = {};
+  const ranks = {}; // pos -> team -> rank (1 = gives up the most)
+  for (const pos of Object.keys(ALLOW_KEYS)) {
+    avgAllowed[pos] = {};
+    for (const [team, byPos] of Object.entries(totals)) if (byPos[pos]?.[1]) avgAllowed[pos][team] = byPos[pos][0] / byPos[pos][1];
+    const vals = Object.values(avgAllowed[pos]);
+    leagueAvg[pos] = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : 0;
+    ranks[pos] = {};
+    Object.entries(avgAllowed[pos])
+      .sort((x, y) => y[1] - x[1])
+      .forEach(([team], i) => (ranks[pos][team] = i + 1));
+  }
+
+  const opponents = {}; // week -> team -> { opp, home }
+  for (const g of schedule) {
+    const wk = (opponents[g.week] ??= {});
+    wk[g.home] = { opp: g.away, home: true };
+    wk[g.away] = { opp: g.home, home: false };
+  }
+
+  // Multiplier for a player at `pos` facing `opp`: >1 means a soft matchup.
+  const factor = (opp, pos) => {
+    const allowed = avgAllowed[pos]?.[opp];
+    if (allowed === undefined || !leagueAvg[pos]) return 1;
+    const games = totals[opp][pos][1];
+    const raw = 1 + (allowed / leagueAvg[pos] - 1) * (games / (games + SHRINK_GAMES));
+    return Math.min(FACTOR_RANGE[1], Math.max(FACTOR_RANGE[0], raw));
+  };
+
+  return {
+    teamCount: Object.keys(avgAllowed.WR || {}).length,
+    opponent: (team, week) => opponents[week]?.[team] ?? null,
+    hasWeek: (week) => Boolean(opponents[week]),
+    teamsPlaying: (week) => new Set(Object.keys(opponents[week] || {})),
+    factor,
+    rank: (opp, pos) => ranks[pos]?.[opp] ?? null,
+    allowed: (opp, pos) => avgAllowed[pos]?.[opp] ?? null,
+    leagueAvg: (pos) => leagueAvg[pos] ?? null,
+  };
+}
+
 // Builds per-player numbers for one league's scoring:
 //   avg  - season points per game, l3 - average of the last 3 games played,
 //   proj - projection for the selected week, value - blended rest-of-season worth.
-export function buildPlayerStats({ players, weeklyStats, projections, nextProjections, scoring, byeTeams, nextByeTeams, trendingAdds, trendingDrops }) {
+//   opp/matchup - this week's opponent and how generous they are to the position,
+//   rosFactor - average matchup over the rest of the fantasy season.
+export function buildPlayerStats({ players, weeklyStats, projections, nextProjections, scoring, byeTeams, nextByeTeams, trendingAdds, trendingDrops, matchups, week, lastWeek }) {
   const adds = new Map(trendingAdds.map((t, i) => [t.player_id, { count: t.count, rank: i + 1 }]));
   const drops = new Map(trendingDrops.map((t) => [t.player_id, t.count]));
 
@@ -73,13 +141,26 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
     if (isOut(p)) proj = 0;
     const nextProj = nextProjections[p.id] && !nextByeTeams.has(p.team) ? scorePoints(nextProjections[p.id], scoring) : null;
 
+    // Matchups: this week's opponent, and the average over the remaining
+    // fantasy weeks (the player's strength of schedule).
+    const game = p.team ? matchups.opponent(p.team, week) : null;
+    const matchupFactor = game ? matchups.factor(game.opp, p.pos) : 1;
+    const rest = [];
+    for (let w = week; w <= lastWeek; w++) {
+      const g = p.team ? matchups.opponent(p.team, w) : null;
+      if (g) rest.push(matchups.factor(g.opp, p.pos));
+    }
+    const rosFactor = rest.length ? rest.reduce((a, b) => a + b, 0) / rest.length : 1;
+
     // For long-term value, a bye or a short absence shouldn't sink a player,
     // so fall back to next week's projection when this week's is zeroed out.
+    // Sleeper's projections already account for the opponent; past scoring
+    // doesn't, so it's scaled by how soft or tough the remaining schedule is.
     const valueProj = onBye || (isOut(p) && p.injury !== 'IR') ? nextProj : proj;
     const parts = [
       [valueProj, 0.5],
-      [l3, 0.3],
-      [seasonAvg, 0.2],
+      [l3 === null ? null : l3 * rosFactor, 0.3],
+      [seasonAvg === null ? null : seasonAvg * rosFactor, 0.2],
     ].filter(([v]) => v !== null);
     const weight = parts.reduce((a, [, w]) => a + w, 0);
     let value = weight ? parts.reduce((a, [v, w]) => a + v * w, 0) / weight : 0;
@@ -96,6 +177,11 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
       nextProj: nextProj === null ? null : round1(nextProj),
       value: round1(value),
       onBye,
+      opp: game?.opp ?? null,
+      home: game?.home ?? null,
+      matchupFactor,
+      matchupRank: game ? matchups.rank(game.opp, p.pos) : null,
+      rosFactor,
       trendAdd: adds.get(p.id)?.count ?? 0,
       trendRank: adds.get(p.id)?.rank ?? null,
       trendDrop: drops.get(p.id) ?? 0,
@@ -107,7 +193,9 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
 // Points used to set a lineup for the selected week.
 export const weekScore = (p) => {
   if (p.onBye || isOut(p)) return 0;
-  return p.proj ?? p.l3 ?? p.avg ?? 0;
+  if (p.proj !== null) return p.proj;
+  // No projection: fall back to recent form, adjusted for the opponent.
+  return (p.l3 ?? p.avg ?? 0) * (p.matchupFactor ?? 1);
 };
 
 export const valueScore = (p) => p.value;

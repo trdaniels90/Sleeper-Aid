@@ -35,6 +35,22 @@ export const getLeague = (leagueId) => get(`/league/${leagueId}`);
 export const getRosters = (leagueId) => get(`/league/${leagueId}/rosters`);
 export const getLeagueUsers = (leagueId) => get(`/league/${leagueId}/users`);
 
+// NFL schedule (undocumented; lives outside /v1). Cached for 12 hours.
+export async function getSchedule(season) {
+  const key = `sa.schedule.${season}`;
+  const cached = readCache(key);
+  if (cached && Date.now() - cached.t < PLAYERS_TTL_MS) return cached.games;
+  try {
+    const res = await fetch(`https://api.sleeper.app/schedule/nfl/regular/${season}`);
+    if (!res.ok) return [];
+    const games = (await res.json()).map(({ week, home, away }) => ({ week, home, away }));
+    writeCache(key, { t: Date.now(), games });
+    return games;
+  } catch {
+    return [];
+  }
+}
+
 export const getTrending = (type, hours = 24, limit = 200) =>
   get(`/players/nfl/trending/${type}?lookback_hours=${hours}&limit=${limit}`).catch(() => []);
 

@@ -786,6 +786,7 @@ dialog::backdrop {
 .table.log td,
 .table.log th {
   padding: 5px 6px;
+  white-space: nowrap;
 }
 
 .ticker {
@@ -937,6 +938,34 @@ dialog::backdrop {
   padding: 2px 4px;
   font-weight: 600;
   text-decoration: underline;
+}
+
+.mu,
+.sched {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.mu-easy { background: var(--good-soft); color: var(--good); }
+.mu-avg { background: var(--surface-2); color: var(--muted); }
+.mu-hard { background: var(--bad-soft); color: var(--bad); }
+.mu-bye { background: var(--surface-2); color: var(--muted); }
+
+.sched-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sched-wk {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 
 @media (max-width: 860px) {

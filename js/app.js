@@ -2,6 +2,7 @@ import * as api from './api.js';
 import {
   MAIN_POSITIONS,
   analyzeWaivers,
+  buildMatchups,
   bestLineup,
   buildPlayerStats,
   findByeTeams,
@@ -42,7 +43,8 @@ const esc = (s) =>
 const fmt = (n) => (n === null || n === undefined ? '–' : Number(n).toFixed(1));
 const signed = (n) => (n > 0.05 ? `+${n.toFixed(1)}` : n < -0.05 ? n.toFixed(1) : '0.0');
 const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 >> 3) ^ 1 && n % 10] || 'th');
-const compact = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+const compact = (n) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
 
 function store(key, value) {
   try {
@@ -106,10 +108,30 @@ function injuryBadge(p) {
   return `<span class="badge ${cls}" title="${esc(p.injury)}">${esc(p.injury === 'Questionable' ? 'Q' : p.injury === 'Doubtful' ? 'D' : p.injury)}</span>`;
 }
 
+// Opponent chip, coloured by how generous that defense is to the position.
+function matchupChip(p, week = app.week, opp = p.opp, home = p.home) {
+  const M = app.league?.matchups;
+  if (!M || !opp) return '';
+  const rank = M.rank(opp, p.pos);
+  const n = M.teamCount || 32;
+  const cls = !rank ? 'mu-avg' : rank <= n / 4 ? 'mu-easy' : rank > (3 * n) / 4 ? 'mu-hard' : 'mu-avg';
+  const what = p.pos === 'DEF' ? 'to opposing defenses' : `to ${p.pos}s`;
+  const title = rank ? `Week ${week}: ${opp} gives up the ${ordinal(rank)}-most fantasy points ${what}` : `Week ${week} opponent`;
+  return `<span class="mu ${cls}" title="${esc(title)}">${home ? 'vs' : '@'} ${esc(opp)}</span>`;
+}
+
+// Rest-of-season schedule in words.
+function scheduleLabel(p) {
+  const pctDiff = Math.round((p.rosFactor - 1) * 100);
+  if (pctDiff >= 4) return { cls: 'mu-easy', text: `Easy schedule (+${pctDiff}%)` };
+  if (pctDiff <= -4) return { cls: 'mu-hard', text: `Tough schedule (${pctDiff}%)` };
+  return { cls: 'mu-avg', text: 'Average schedule' };
+}
+
 function playerCell(p) {
   return `<div class="player" data-player="${esc(p.id)}" role="button" tabindex="0">${playerImg(p)}<div><div class="pname">${esc(p.name)} ${injuryBadge(p)}${
     p.trendRank && p.trendRank <= 25 ? '<span class="badge hot" title="Top 25 most-added on Sleeper in the last 24h">HOT</span>' : ''
-  }</div><div class="pmeta"><span class="pos pos-${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.team || 'FA')}</div></div></div>`;
+  }</div><div class="pmeta"><span class="pos pos-${esc(p.pos)}">${esc(p.pos)}</span> ${esc(p.team || 'FA')} ${matchupChip(p)}</div></div></div>`;
 }
 
 function rankClass(rank, n) {
@@ -152,6 +174,7 @@ async function fetchLeagueRaw(leagueId) {
     api.getTrending('add'),
     api.getTrending('drop'),
   ]);
+  const schedule = await api.getSchedule(season);
 
   setStatus('Loading weekly stats…');
   const weeks = Array.from({ length: currentWeek }, (_, i) => i + 1);
@@ -160,7 +183,7 @@ async function fetchLeagueRaw(leagueId) {
     weeks.map(async (week) => ({ week, stats: await api.getWeekStats(season, week, { cacheable: week < currentWeek }) })),
   );
 
-  const raw = { season, currentWeek, league, rosters, users, players, trendingAdds, trendingDrops, weeklyStats, projections: {} };
+  const raw = { season, currentWeek, league, rosters, users, players, trendingAdds, trendingDrops, weeklyStats, schedule, projections: {} };
   app.rawCache[leagueId] = raw;
   return raw;
 }
@@ -202,8 +225,18 @@ async function loadLeague() {
 function computeLeague(raw, projections, nextProjections) {
   const { league, rosters, users, players } = raw;
   const scoring = league.scoring_settings || {};
-  const byeTeams = findByeTeams(projections, players);
-  const nextByeTeams = findByeTeams(nextProjections, players);
+  const matchups = buildMatchups(raw.weeklyStats, raw.schedule);
+  // Byes come from the schedule when we have it, otherwise from projections.
+  const nflTeams = Object.values(players).filter((p) => p.pos === 'DEF').map((p) => p.team || p.id);
+  const byesFor = (week, proj) => {
+    if (!matchups.hasWeek(week)) return findByeTeams(proj, players);
+    const playing = matchups.teamsPlaying(week);
+    return new Set(nflTeams.filter((t) => !playing.has(t)));
+  };
+  const byeTeams = byesFor(app.week, projections);
+  const nextByeTeams = byesFor(app.week + 1, nextProjections);
+  // Fantasy season ends with the championship, usually 3 weeks after playoffs start.
+  const lastFantasyWeek = Math.min(18, (league.settings?.playoff_week_start || 15) + 2);
 
   const stats = buildPlayerStats({
     players,
@@ -215,9 +248,12 @@ function computeLeague(raw, projections, nextProjections) {
     nextByeTeams,
     trendingAdds: raw.trendingAdds,
     trendingDrops: raw.trendingDrops,
+    matchups,
+    week: app.week,
+    lastWeek: lastFantasyWeek,
   });
   const lookup = (id) =>
-    stats[id] || { id, name: `Player ${id}`, pos: '?', fp: [], team: '', injury: '', games: [], gp: 0, season: 0, avg: null, l3: null, proj: 0, nextProj: null, value: 0, onBye: false, trendAdd: 0, trendDrop: 0 };
+    stats[id] || { id, name: `Player ${id}`, pos: '?', fp: [], team: '', injury: '', games: [], gp: 0, season: 0, avg: null, l3: null, proj: 0, nextProj: null, value: 0, onBye: false, opp: null, matchupFactor: 1, rosFactor: 1, trendAdd: 0, trendDrop: 0 };
 
   const slots = startingSlots(league.roster_positions || []);
   const usersById = new Map(users.map((u) => [u.user_id, u]));
@@ -308,7 +344,7 @@ function computeLeague(raw, projections, nextProjections) {
     .sort((a, b) => b.week - a.week || b.pts - a.pts)
     .slice(0, HOT_MAX);
 
-  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: raw.currentWeek, hotWeeks, breakouts, claims };
+  return { league, slots, positions, teams, me, byeTeams, waivers, moves, scoring, players: stats, ownerOf, lastWeek: playedWeeks.length ? playedWeeks[playedWeeks.length - 1] : 0, hotWeeks, breakouts, claims, matchups, lastFantasyWeek };
 }
 
 // ---------- rendering ----------
@@ -542,7 +578,7 @@ function moveLine(m) {
   const why =
     m.kind === 'week'
       ? `One-week fill-in: <b>+${m.weekGain.toFixed(1)}</b> pts in week ${app.week}`
-      : `<b>+${m.gain.toFixed(1)}</b> pts/week rest of season${m.weekGain > 0.05 ? ` · +${m.weekGain.toFixed(1)} in week ${app.week}` : ''}`;
+      : `<b>+${m.gain.toFixed(1)}</b> pts/week rest of season${m.weekGain > 0.05 ? ` · +${m.weekGain.toFixed(1)} in week ${app.week}` : ''} · ${scheduleLabel(m.player).text.toLowerCase()}`;
   return `<li class="move"><div class="move-main"><div class="move-add">${playerCell(m.player)}</div><div class="move-arrow">⇄</div>${drop}</div><div class="move-why">${why}${
     m.player.trendAdd ? ` · ${compact(m.player.trendAdd)} adds in 24h` : ''
   }</div>${claimButton(m.player, m.drop)}</li>`;
@@ -610,7 +646,7 @@ function renderBestByPosition(results) {
               : r.weekGain > 0.05
                 ? `<span class="verdict week">Week ${app.week} only${r.drop ? ` · drop ${esc(r.drop.name)}` : ''}</span>`
                 : `<span class="verdict muted">Bench depth · ${fmt(Math.abs(r.margin))} behind your starter</span>`;
-          return `<li>${playerCell(r.player)}<div class="pos-stats"><span class="gain ${r.gain > 0.05 ? 'up' : ''}">${signed(r.gain)}</span><span class="muted small">proj ${fmt(r.player.proj)}</span></div>${verdict}</li>`;
+          return `<li>${playerCell(r.player)}<div class="pos-stats"><span class="gain ${r.gain > 0.05 ? 'up' : ''}">${signed(r.gain)}</span><span class="muted small">proj ${fmt(r.player.proj)}</span><span class="small sched ${scheduleLabel(r.player).cls}">${scheduleLabel(r.player).text.replace(' schedule', '')}</span></div>${verdict}</li>`;
         })
         .join('');
       return `<div class="pos-col"><h4><span class="pos pos-${pos}">${pos}</span> ${L.me.ranks[pos] ? `<span class="muted small">you rank ${ordinal(L.me.ranks[pos])}</span>` : ''}</h4><ol class="pos-list">${items}</ol></div>`;
@@ -638,6 +674,7 @@ function renderWaivers() {
     proj: (a, b) => (b.player.proj ?? -1) - (a.player.proj ?? -1),
     l3: (a, b) => (b.player.l3 ?? -1) - (a.player.l3 ?? -1),
     value: (a, b) => b.player.value - a.player.value,
+    sched: (a, b) => b.player.rosFactor - a.player.rosFactor || b.player.value - a.player.value,
   };
 
   const list = results
@@ -656,6 +693,7 @@ function renderWaivers() {
       <td class="num hide-sm">${fmt(r.player.l3)}</td>
       <td class="num hide-sm">${fmt(r.player.avg)}</td>
       <td class="num">${r.player.trendAdd ? compact(r.player.trendAdd) : '–'}</td>
+      <td class="hide-sm"><span class="sched ${scheduleLabel(r.player).cls}">${scheduleLabel(r.player).text.replace(' schedule', '')}</span></td>
       <td class="hide-sm">${r.drop && r.gain > 0.05 ? esc(r.drop.name) : needsDrop ? '<span class="muted">–</span>' : '<span class="muted">open spot</span>'}</td>
     </tr>`,
     )
@@ -680,14 +718,15 @@ function renderWaivers() {
             ['proj', 'Projection'],
             ['l3', 'Last 3 games'],
             ['value', 'Overall value'],
+            ['sched', 'Easiest schedule'],
           ]
             .map(([v, label]) => `<option value="${v}" ${w.sort === v ? 'selected' : ''}>${label}</option>`)
             .join('')}
         </select></label>
       </div>
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Player</th><th class="num" title="Points per week your best lineup gains, rest of season">Season +</th><th class="num" title="Points your week ${app.week} lineup gains">Wk ${app.week} +</th><th class="num hide-sm">Proj</th><th class="num hide-sm">L3</th><th class="num hide-sm">Avg</th><th class="num" title="Adds across all Sleeper leagues, last 24h">Adds</th><th class="hide-sm">Drop</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="muted">No free agents match.</td></tr>'}</tbody>
+        <thead><tr><th>Player</th><th class="num" title="Points per week your best lineup gains, rest of season">Season +</th><th class="num" title="Points your week ${app.week} lineup gains">Wk ${app.week} +</th><th class="num hide-sm">Proj</th><th class="num hide-sm">L3</th><th class="num hide-sm">Avg</th><th class="num" title="Adds across all Sleeper leagues, last 24h">Adds</th><th class="hide-sm" title="How soft the remaining opponents are at this position">Schedule</th><th class="hide-sm">Drop</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="muted">No free agents match.</td></tr>'}</tbody>
       </table></div>
       <p class="footnote"><b>Season +</b> is how much your team improves per week for the rest of the season if you add the player, and drop the suggested player when your roster is full. It counts your best lineup, plus how many points your bench would save when a starter misses a week to a bye or injury. A small positive number usually means a better bench stash. <b>Adds</b> is how many Sleeper users added them in the last 24 hours.</p>
     </section>`;
@@ -764,6 +803,34 @@ function pointsChart(p, weeks) {
   return `<div class="bars" role="img" aria-label="Fantasy points by week">${cols.join('')}</div>`;
 }
 
+// This week's matchup in words plus the rest-of-season opponents.
+function matchupSection(p) {
+  const L = app.league;
+  const M = L.matchups;
+  if (!p.team) return '';
+  const what = p.pos === 'DEF' ? 'opposing defenses' : `${p.pos}s`;
+  let thisWeek;
+  if (p.onBye || !p.opp) thisWeek = `<p>Week ${app.week}: <b>bye</b>.</p>`;
+  else {
+    const rank = M.rank(p.opp, p.pos);
+    const allowed = M.allowed(p.opp, p.pos);
+    thisWeek = `<p>Week ${app.week}: ${matchupChip(p)} ${
+      rank
+        ? `${esc(p.opp)} gives up <b>${fmt(allowed)}</b> pts per game to ${what}, the <b>${ordinal(rank)}-most</b> of ${M.teamCount} teams (average ${fmt(M.leagueAvg(p.pos))}).`
+        : ''
+    }</p>`;
+  }
+  const chips = [];
+  for (let w = app.week; w <= L.lastFantasyWeek; w++) {
+    const g = M.opponent(p.team, w);
+    chips.push(`<span class="sched-wk"><span class="muted small">${w}</span>${g ? matchupChip(p, w, g.opp, g.home) : '<span class="mu mu-bye">BYE</span>'}</span>`);
+  }
+  const s = scheduleLabel(p);
+  return `<h3>Matchups</h3>${thisWeek}
+    <p><span class="sched ${s.cls}">${s.text}</span> <span class="muted small">for weeks ${app.week}–${L.lastFantasyWeek}, based on what each opponent has given up this season.</span></p>
+    <div class="sched-row">${chips.join('')}</div>`;
+}
+
 function openPlayer(id) {
   const L = app.league;
   const p = L?.players[id];
@@ -777,8 +844,10 @@ function openPlayer(id) {
     .reverse()
     .map((w) => {
       const g = byWeek.get(w);
-      if (!g) return `<tr class="muted"><td>${w}</td><td class="num">–</td><td colspan="${cols.length}">Didn't play (bye or inactive)</td></tr>`;
-      return `<tr><td>${w}</td><td class="num strong">${fmt(g.pts)}</td>${cols.map(([, f]) => `<td class="num">${f(g.stats)}</td>`).join('')}</tr>`;
+      const game = p.team ? L.matchups.opponent(p.team, w) : null;
+      const opp = game ? `${game.home ? 'vs' : '@'} ${esc(game.opp)}` : 'Bye';
+      if (!g) return `<tr class="muted"><td>${w}</td><td>${opp}</td><td class="num">–</td><td colspan="${cols.length}">Didn't play${game ? ' (inactive)' : ''}</td></tr>`;
+      return `<tr><td>${w}</td><td>${opp}</td><td class="num strong">${fmt(g.pts)}</td>${cols.map(([, f]) => `<td class="num">${f(g.stats)}</td>`).join('')}</tr>`;
     })
     .join('');
   const meta = [p.team || 'FA', p.age ? `Age ${p.age}` : '', p.depth ? `Depth chart #${p.depth}` : ''].filter(Boolean).map(esc).join(' · ');
@@ -799,12 +868,13 @@ function openPlayer(id) {
       <div><div class="label">Last 3</div><div class="value">${fmt(p.l3)}</div></div>
       <div><div class="label">Wk ${app.week} proj</div><div class="value">${fmt(p.proj)}</div></div>
     </div>
+    ${matchupSection(p)}
     <h3>Points by week</h3>
     ${p.games.length || p.proj ? pointsChart(p, weeks) : '<p class="muted">No games played yet this season.</p>'}
     <h3>Game log</h3>
     <div class="table-wrap"><table class="table log">
-      <thead><tr><th>Wk</th><th class="num">Pts</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join('')}</tr></thead>
-      <tbody>${logRows || `<tr><td colspan="${cols.length + 2}" class="muted">No games yet.</td></tr>`}</tbody>
+      <thead><tr><th>Wk</th><th>Opp</th><th class="num">Pts</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join('')}</tr></thead>
+      <tbody>${logRows || `<tr><td colspan="${cols.length + 3}" class="muted">No games yet.</td></tr>`}</tbody>
     </table></div>
     <p class="footnote">Points use your league's scoring settings.</p>`;
   $('#player-dialog').showModal();
