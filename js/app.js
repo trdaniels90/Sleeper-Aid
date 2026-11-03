@@ -101,11 +101,48 @@ function playerImg(p) {
   return `<img class="headshot" loading="lazy" alt="" src="https://sleepercdn.com/content/nfl/players/thumb/${esc(p.id)}.jpg" onerror="this.style.visibility='hidden'">`;
 }
 
+// Current injury report in one line, e.g. "Questionable · Ankle · Limited practice".
+function injuryText(p) {
+  if (!p.injury) return '';
+  return [p.injury, p.injuryBody, p.practice && `${p.practice} practice`].filter(Boolean).join(' · ');
+}
+
+// Week ranges like "4–8, 11".
+function weekRanges(weeks) {
+  const out = [];
+  for (const w of weeks) {
+    const last = out[out.length - 1];
+    if (last && w === last[1] + 1) last[1] = w;
+    else out.push([w, w]);
+  }
+  return out.map(([a, z]) => (a === z ? `${a}` : `${a}–${z}`)).join(', ');
+}
+
+// Missed games this season, e.g. "missed 5 games (wk 4–8)".
+function absenceText(p) {
+  const n = p.missedWeeks?.length || 0;
+  return n ? `missed ${n} game${n > 1 ? 's' : ''} (wk ${weekRanges(p.missedWeeks)})` : '';
+}
+
+// What happened in a week the player has no stats for.
+function weekNote(p, w) {
+  const st = p.weekStatus?.[w];
+  if (st === 'bye') return { short: 'BYE', long: 'Bye week', cls: 'bye' };
+  if (st === 'dnp') return { short: 'DNP', long: 'Active but didn\'t play', cls: 'dnp' };
+  if (st === 'out') {
+    const outs = Object.keys(p.weekStatus).map(Number).filter((x) => p.weekStatus[x] === 'out').sort((x, y) => x - y);
+    const current = p.injury && outs.slice(outs.length - p.outStreak).includes(w);
+    if (current) return { short: 'OUT', long: `Out – ${p.injuryBody || p.injury}`, cls: 'out' };
+    return { short: 'OUT', long: 'Inactive (injury, illness or not on the roster yet)', cls: 'out' };
+  }
+  return { short: '–', long: 'No game', cls: '' };
+}
+
 function injuryBadge(p) {
   if (p.onBye) return '<span class="badge bye">BYE</span>';
   if (!p.injury) return '';
   const cls = isOut(p) ? 'out' : p.injury === 'Doubtful' ? 'doubtful' : 'questionable';
-  return `<span class="badge ${cls}" title="${esc(p.injury)}">${esc(p.injury === 'Questionable' ? 'Q' : p.injury === 'Doubtful' ? 'D' : p.injury)}</span>`;
+  return `<span class="badge ${cls}" title="${esc(injuryText(p))}">${esc(p.injury === 'Questionable' ? 'Q' : p.injury === 'Doubtful' ? 'D' : p.injury)}</span>`;
 }
 
 // Opponent chip, coloured by how generous that defense is to the position.
@@ -579,9 +616,11 @@ function moveLine(m) {
     m.kind === 'week'
       ? `One-week fill-in: <b>+${m.weekGain.toFixed(1)}</b> pts in week ${app.week}`
       : `<b>+${m.gain.toFixed(1)}</b> pts/week rest of season${m.weekGain > 0.05 ? ` · +${m.weekGain.toFixed(1)} in week ${app.week}` : ''} · ${scheduleLabel(m.player).text.toLowerCase()}`;
+  const health = [injuryText(m.player), absenceText(m.player)].filter(Boolean).join(' · ');
+  const warn = health ? `<div class="move-warn">⚠ ${esc(health)}</div>` : '';
   return `<li class="move"><div class="move-main"><div class="move-add">${playerCell(m.player)}</div><div class="move-arrow">⇄</div>${drop}</div><div class="move-why">${why}${
     m.player.trendAdd ? ` · ${compact(m.player.trendAdd)} adds in 24h` : ''
-  }</div>${claimButton(m.player, m.drop)}</li>`;
+  }</div>${warn}${claimButton(m.player, m.drop)}</li>`;
 }
 
 function claimButton(add, drop) {
@@ -791,7 +830,10 @@ function pointsChart(p, weeks) {
   const byWeek = new Map(p.games.map((g) => [g.week, g]));
   const cols = weeks.map((w) => {
     const g = byWeek.get(w);
-    if (!g) return `<div class="bar-col" tabindex="0" data-tip="Week ${w}: didn't play (bye or inactive)"><div class="bar-area"><span class="bar-none">–</span></div><div class="bar-x">${w}</div></div>`;
+    if (!g) {
+      const note = weekNote(p, w);
+      return `<div class="bar-col" tabindex="0" data-tip="Week ${w}: ${esc(note.long)}"><div class="bar-area"><span class="bar-none ${note.cls}">${note.short}</span></div><div class="bar-x">${w}</div></div>`;
+    }
     const h = (Math.max(g.pts, 0) / max) * 100;
     const label = best && g.week === best.week ? `<span class="bar-label">${fmt(g.pts)}</span>` : '';
     return `<div class="bar-col" tabindex="0" data-tip="Week ${w}: ${fmt(g.pts)} pts"><div class="bar-area">${label}<div class="bar" style="height:${h}%"></div></div><div class="bar-x">${w}</div></div>`;
@@ -801,6 +843,19 @@ function pointsChart(p, weeks) {
     cols.push(`<div class="bar-col" tabindex="0" data-tip="Week ${app.week} projection: ${fmt(p.proj)} pts"><div class="bar-area"><span class="bar-label">${fmt(p.proj)}</span><div class="bar proj" style="height:${h}%"></div></div><div class="bar-x">${app.week}<br>proj</div></div>`);
   }
   return `<div class="bars" role="img" aria-label="Fantasy points by week">${cols.join('')}</div>`;
+}
+
+// Current injury report plus games missed this season.
+function injuryBox(p) {
+  const absence = absenceText(p);
+  if (!p.injury && !absence) return '';
+  const cls = isOut(p) || p.injury === 'Doubtful' ? 'out' : p.injury ? 'questionable' : 'history';
+  const streak = p.injury && p.outStreak ? ` – out the last ${p.outStreak} game${p.outStreak > 1 ? 's' : ''}` : '';
+  return `<div class="injury-box ${cls}">
+    ${p.injury ? `<div><b>${esc(injuryText(p))}</b>${streak}</div>` : '<div><b>Healthy now</b></div>'}
+    ${p.injuryNotes ? `<div class="small">${esc(p.injuryNotes)}</div>` : ''}
+    ${absence ? `<div class="small">${absence.charAt(0).toUpperCase() + absence.slice(1)} this season.</div>` : ''}
+  </div>`;
 }
 
 // This week's matchup in words plus the rest-of-season opponents.
@@ -846,7 +901,10 @@ function openPlayer(id) {
       const g = byWeek.get(w);
       const game = p.team ? L.matchups.opponent(p.team, w) : null;
       const opp = game ? `${game.home ? 'vs' : '@'} ${esc(game.opp)}` : 'Bye';
-      if (!g) return `<tr class="muted"><td>${w}</td><td>${opp}</td><td class="num">–</td><td colspan="${cols.length}">Didn't play${game ? ' (inactive)' : ''}</td></tr>`;
+      if (!g) {
+        const note = weekNote(p, w);
+        return `<tr class="missed ${note.cls}"><td>${w}</td><td>${opp}</td><td class="num">–</td><td colspan="${cols.length}">${esc(note.long)}</td></tr>`;
+      }
       return `<tr><td>${w}</td><td>${opp}</td><td class="num strong">${fmt(g.pts)}</td>${cols.map(([, f]) => `<td class="num">${f(g.stats)}</td>`).join('')}</tr>`;
     })
     .join('');
@@ -862,6 +920,7 @@ function openPlayer(id) {
       </div>
       <button class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
+    ${injuryBox(p)}
     <div class="mini-stats">
       <div><div class="label">Season</div><div class="value">${fmt(p.season)}</div></div>
       <div><div class="label">Avg (${p.gp} g)</div><div class="value">${fmt(p.avg)}</div></div>

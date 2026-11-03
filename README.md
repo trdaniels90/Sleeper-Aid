@@ -15,7 +15,7 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
   - **Pending claims:** Sleeper doesn't share pending waiver claims, so tap *I put in this claim* on a suggestion to tell the app. Until Sleeper processes the claim, the app plans as if it will go through: that player and the player you're dropping stop being suggested, and later suggestions work from your new roster. A claim clears on its own once the player is on any roster, once you no longer have the player you were dropping, or after 8 days. *Undo* removes it sooner. Claims are saved in the browser you marked them on.
   - **Best available by position:** the top 4 free agents at each position, each marked *Add · drop X*, *Week N only*, or *Bench depth*.
   - **All free agents:** a full table you can sort and filter by position.
-- **Player details:** tap any player to see their season totals, points by week with the upcoming projection, and a game log with position-specific stats (passing, rushing, receiving and snap share, field goals, or defense numbers), all scored with your league's settings.
+- **Player details:** tap any player to see their injury report (status, body part, practice participation and notes) and how many games they've missed this season, then their season totals, points by week with the upcoming projection, and a game log with position-specific stats (passing, rushing, receiving and snap share, field goals, or defense numbers), all scored with your league's settings.
 
 ## How players are valued
 
@@ -25,6 +25,12 @@ It talks straight to Sleeper's public, read-only API from the browser. There's n
   - Each player shows this week's opponent as a chip: green means a defense in the top quarter for points allowed to that position, red means the bottom quarter.
   - **Strength of schedule** averages the player's remaining opponents through the fantasy championship (Easy, Average or Tough). It adjusts the parts of **Value** that come from past games, since those don't account for opponents. Sleeper's projections already account for the opponent, so they're used as-is.
   - Tap a player to see this week's matchup, all of their remaining opponents, and an opponent column in the game log.
+- **Injuries:** Sleeper only publishes each player's *current* injury report, so past absences are worked out from the weekly stats and the schedule. Each week a player has no stats is labeled one of these:
+  - **Bye:** the team didn't play.
+  - **DNP:** the player was active but didn't play.
+  - **Out:** the player was inactive. When he's on the injury report now and has missed every game since, those weeks show his current injury, e.g. *Out – Quadriceps*.
+
+  Recommended pickups carry a ⚠ line when the player is injured or has missed games.
 - The app defaults to the upcoming week. From Monday to Wednesday that's next week, because the current week's games are done and waiver claims are for next week. You can change it with the week picker.
 - **Season +** on the Moves tab adds the free agent to your roster, drops the player you'd miss least if the roster is full, re-optimises your lineup and reports the change. Bench depth counts too. For each starter, the app works out how many points your bench would save if that starter missed a week, weighted by how often players at that position miss (about 18% for RBs, 15% for WRs, 12% for TEs, 8% for QBs; backup kickers and defenses count for nothing since you can stream them). A backup RB or WR is worth keeping; a third QB isn't.
 

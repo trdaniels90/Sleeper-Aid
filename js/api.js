@@ -3,7 +3,7 @@
 
 const BASE = 'https://api.sleeper.app/v1';
 const FANTASY_POSITIONS = new Set(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']);
-const PLAYERS_KEY = 'sa.players.v1';
+const PLAYERS_KEY = 'sa.players.v2';
 const PLAYERS_TTL_MS = 12 * 60 * 60 * 1000;
 
 async function get(path) {
@@ -60,15 +60,19 @@ export const getWeekProjections = (season, week) =>
   get(`/projections/nfl/regular/${season}/${week}`).catch(() => ({}));
 
 export async function getWeekStats(season, week, { cacheable = false } = {}) {
-  const key = `sa.stats.${season}.${week}`;
+  const key = `sa.stats2.${season}.${week}`;
   if (cacheable) {
     const cached = readCache(key);
     if (cached) return cached;
   }
   const raw = await get(`/stats/nfl/regular/${season}/${week}`).catch(() => ({}));
-  // Keep only players who actually played; drops ~90% of the payload.
+  // Keep full lines for players who played, and just a marker for players who
+  // dressed but didn't play; everyone else was inactive. Drops ~90% of the payload.
   const trimmed = {};
-  for (const [id, s] of Object.entries(raw)) if (s && s.gp > 0) trimmed[id] = s;
+  for (const [id, s] of Object.entries(raw)) {
+    if (s?.gp > 0) trimmed[id] = s;
+    else if (s?.gms_active > 0) trimmed[id] = { gms_active: 1 };
+  }
   if (cacheable && Object.keys(trimmed).length) writeCache(key, trimmed);
   return trimmed;
 }
@@ -91,6 +95,10 @@ export async function getPlayers() {
       p.injury_status || '',
       p.age ?? '',
       p.depth_chart_order ?? '',
+      p.injury_body_part || '',
+      p.injury_notes || '',
+      p.practice_participation || '',
+      p.injury_start_date || '',
     ];
   }
   writeCache(PLAYERS_KEY, { t: Date.now(), data });
@@ -99,7 +107,7 @@ export async function getPlayers() {
 
 function expandPlayers(data) {
   const players = {};
-  for (const [id, [name, pos, fp, team, injury, age, depth]] of Object.entries(data)) {
+  for (const [id, [name, pos, fp, team, injury, age, depth, injuryBody, injuryNotes, practice, injuryStart]] of Object.entries(data)) {
     players[id] = {
       id,
       name,
@@ -109,6 +117,10 @@ function expandPlayers(data) {
       injury,
       age,
       depth,
+      injuryBody,
+      injuryNotes,
+      practice,
+      injuryStart,
     };
   }
   return players;

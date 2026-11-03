@@ -63,7 +63,7 @@ export function buildMatchups(weeklyStats, schedule) {
   const totals = {}; // team -> pos -> [sum, games]
   for (const { stats } of weeklyStats) {
     for (const [team, s] of Object.entries(stats)) {
-      if (!s.fan_pts_allow && s.fan_pts_allow !== 0) continue; // only team defense lines
+      if (s.fan_pts_allow === undefined) continue; // only team defense lines
       for (const [pos, key] of Object.entries(ALLOW_KEYS)) {
         if (s[key] === undefined) continue;
         const t = ((totals[team] ??= {})[pos] ??= [0, 0]);
@@ -126,11 +126,33 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
 
   const out = {};
   for (const p of Object.values(players)) {
+    // What happened each week: played, bye, dressed without playing, or inactive.
     const games = [];
+    const weekStatus = {};
     for (const { week, stats } of weeklyStats) {
-      const pts = scorePoints(stats[p.id], scoring);
-      if (pts !== null) games.push({ week, pts, stats: stats[p.id] });
+      if (!Object.keys(stats).length) continue; // week not played yet
+      const s = stats[p.id];
+      if (s?.gp > 0) {
+        games.push({ week, pts: scorePoints(s, scoring), stats: s });
+        weekStatus[week] = 'played';
+      } else if (p.team && !matchups.opponent(p.team, week) && matchups.hasWeek(week)) weekStatus[week] = 'bye';
+      else if (s?.gms_active > 0) weekStatus[week] = 'dnp';
+      else weekStatus[week] = 'out';
     }
+    const statusWeeks = Object.keys(weekStatus).map(Number).sort((x, y) => x - y);
+    const missedWeeks = statusWeeks.filter((w) => weekStatus[w] === 'out');
+    // Games missed in a row up to the latest week (skipping byes).
+    let outStreak = 0;
+    for (let i = statusWeeks.length - 1; i >= 0; i--) {
+      const st = weekStatus[statusWeeks[i]];
+      if (st === 'bye') continue;
+      if (st !== 'out') break;
+      outStreak++;
+    }
+    // Before a player's first game they may not have been on the team yet
+    // (rookie call-up, signing), so only count absences after it.
+    const firstGame = games[0]?.week ?? Infinity;
+    const missedAfterDebut = missedWeeks.filter((w) => w > firstGame);
     const season = games.reduce((a, g) => a + g.pts, 0);
     const seasonAvg = avg(games.map((g) => g.pts));
     const l3 = avg(games.slice(-3).map((g) => g.pts));
@@ -177,6 +199,9 @@ export function buildPlayerStats({ players, weeklyStats, projections, nextProjec
       nextProj: nextProj === null ? null : round1(nextProj),
       value: round1(value),
       onBye,
+      weekStatus,
+      missedWeeks: missedAfterDebut,
+      outStreak: firstGame === Infinity ? 0 : outStreak,
       opp: game?.opp ?? null,
       home: game?.home ?? null,
       matchupFactor,
